@@ -64,7 +64,7 @@ log "Provedor detectado: $PROVIDER"
 BOT_USER="cryptobot"
 BOT_DIR="/home/$BOT_USER/bot"
 SERVICE_NAME="cryptobot"
-PYTHON_VERSION="3.11"
+PYTHON_VERSION="3"
 
 section "1/8 — Atualizando o sistema"
 apt-get update -qq
@@ -81,8 +81,8 @@ log "Sistema atualizado"
 section "2/8 — Instalando Python $PYTHON_VERSION"
 add-apt-repository -y ppa:deadsnakes/ppa -q 2>/dev/null || true
 apt-get update -qq
-apt-get install -y -qq python3.11 python3.11-venv python3.11-dev
-update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
+apt-get install -y -qq python3 python3-venv python3-dev
+##update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
 log "Python $(python3 --version) instalado"
 
 section "3/8 — Criando usuário dedicado '$BOT_USER'"
@@ -102,7 +102,7 @@ chown -R "$BOT_USER:$BOT_USER" "/var/log/cryptobot"
 log "Diretórios criados em $BOT_DIR"
 
 section "4/8 — Configurando ambiente Python"
-sudo -u "$BOT_USER" python3.11 -m venv "$BOT_DIR/.venv"
+sudo -u "$BOT_USER" python3 -m venv "$BOT_DIR/.venv"
 log "Ambiente virtual criado"
 
 # Cria requirements se não existir
