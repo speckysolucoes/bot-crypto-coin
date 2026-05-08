@@ -59,15 +59,41 @@ def setup_logger(name: str = "cryptobot", log_file: str = "logs/bot.log", level:
         logger.addHandler(ch)
 
         # Arquivo (rotacionado a cada 5MB, mantém 3 backups)
-        fh = RotatingFileHandler(log_file, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8")
-        fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
-        logger.addHandler(fh)
+        try:
+            Path(log_file).parent.mkdir(parents=True, exist_ok=True)
+            fh = RotatingFileHandler(
+                log_file,
+                maxBytes=5 * 1024 * 1024,
+                backupCount=3,
+                encoding="utf-8",
+            )
+            fh.setFormatter(
+                logging.Formatter(
+                    "%(asctime)s [%(levelname)s] %(message)s",
+                    datefmt="%Y-%m-%d %H:%M:%S",
+                )
+            )
+            logger.addHandler(fh)
+        except OSError as e:
+            # Ex.: PermissionError em VPS após deploy (ownership/premissões)
+            logger.warning(
+                "Não foi possível abrir log_file='%s'. Fallback para terminal apenas. Erro: %s",
+                log_file,
+                e,
+            )
 
         json_log = os.getenv("BOT_JSON_LOG_FILE", "").strip()
         if json_log:
-            Path(json_log).parent.mkdir(parents=True, exist_ok=True)
-            jh = logging.FileHandler(json_log, encoding="utf-8")
-            jh.setFormatter(JsonLinesFormatter())
-            logger.addHandler(jh)
+            try:
+                Path(json_log).parent.mkdir(parents=True, exist_ok=True)
+                jh = logging.FileHandler(json_log, encoding="utf-8")
+                jh.setFormatter(JsonLinesFormatter())
+                logger.addHandler(jh)
+            except OSError as e:
+                logger.warning(
+                    "Não foi possível abrir BOT_JSON_LOG_FILE='%s'. Fallback ignorado. Erro: %s",
+                    json_log,
+                    e,
+                )
 
     return logger
