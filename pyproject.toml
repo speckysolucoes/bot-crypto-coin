@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bot-crypto-coin"
+version = "4.1.0"
+description = "Bot de trading spot (MA + RSI + Bollinger) com Binance / Bybit / KuCoin via ccxt"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "ccxt>=4.3.0",
+  "pandas>=2.0.0",
+  "numpy>=1.26.0",
+  "python-dotenv>=1.0.0",
+  "aiohttp>=3.9.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0", "pytest-asyncio>=0.24.0"]
+
+[project.scripts]
+cryptobot = "bot:main_entry"
+cryptobot-backtest = "backtest:main_entry"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.setuptools]
+py-modules = ["bot", "backtest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

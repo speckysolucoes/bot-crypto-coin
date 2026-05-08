@@ -1,0 +1,16 @@
+2026-05-07 20:14:29 [INFO] ============================================================
+2026-05-07 20:14:29 [INFO]   CryptoBot v1.0 - Iniciando...
+2026-05-07 20:14:29 [INFO] ============================================================
+2026-05-07 20:14:29 [INFO] 📄 Paper trading ativo — saldo inicial: 10,000.00 USDT
+2026-05-07 20:14:29 [INFO] ⏱  Loop a cada 900s | Par: BTC/USDT
+2026-05-07 20:14:29 [INFO] ⏰ Scheduler: primeira subida — auto-tuner não roda ao iniciar; primeira janela após 7d na hora 03h.
+2026-05-07 20:14:32 [INFO] 📈 BTC/USDT $79,958.30 | RSI=47.6 | MAf=79849.77 | MAs=79993.65 | Posição=NÃO
+2026-05-07 20:14:32 [INFO] 🧠 Regime: tendência de baixa | Confiança: 15/100 | ADX: 39.7 | Vol: 0.69x | B&H: -2.5% | Bot: +0.0%
+2026-05-07 20:14:35 [INFO] 🔭 MTF [1h]: viés=baixa | RSI=37.8 | ADX=43.9 | Regime=tendência de baixa
+2026-05-07 20:14:35 [INFO] 📊 ⏳ AGUARDAR — [regime=tendência de baixa | confiança=15/100 | ADX=39.7 | vol=0.69x | B&H=-2.5%]
+2026-05-07 20:14:35 [INFO] 💤 Aguardando 900s até próxima vela...
+2026-05-07 20:14:41 [INFO] ⏹  Bot encerrado
+   Trades: 0 | Win rate: 0%
+   P&L total: +0.00 USDT
+   P&L hoje:  +0.00 USDT
+   Saldo USDT: 10000.00

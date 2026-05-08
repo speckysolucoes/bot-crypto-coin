@@ -24,7 +24,8 @@ from src.reconnect import ReconnectionManager
 from src.mtf import MultiTimeframeAnalyzer, MTFBias
 from src.position_sizing import PositionSizer
 from src.report import send_weekly_report
-from scheduler import WeeklyScheduler
+from src.metrics import append_metric
+from src.scheduler import WeeklyScheduler
 
 TIMEFRAME_SECONDS = {
     "1m": 60, "3m": 180, "5m": 300, "15m": 900,
@@ -33,11 +34,12 @@ TIMEFRAME_SECONDS = {
 
 
 class TradingBot:
-    def __init__(self, cfg: Config, logger):
+    def __init__(self, cfg: Config, logger, shutdown_event: Optional[asyncio.Event] = None):
         self.cfg       = cfg
         self.logger    = logger
         self.connector = ExchangeConnector(cfg, logger)
         self.notifier  = Notifier(cfg, logger)
+        self._shutdown = shutdown_event
 
         # Estado
         self.in_position:      bool  = False
@@ -79,23 +81,48 @@ class TradingBot:
             f"Trailing stop ✅ | MTF ✅ | Sizing dinâmico ✅"
         )
         bal = await self.connector.get_balances()
-        self.day_start_balance = bal.get("USDT", self.cfg.paper_initial_balance)
+        self.day_start_balance = self._quote_free(bal) or self.cfg.paper_initial_balance
 
         self.running   = True
         sleep_secs     = TIMEFRAME_SECONDS.get(self.cfg.timeframe, 900)
         self.logger.info(f"⏱  Loop a cada {sleep_secs}s | Par: {self.cfg.symbol}")
 
-        while self.running:
-            try:
-                await self.scheduler.maybe_run(bot=self)
-                await self._maybe_send_weekly_report()
-                await self._tick()
-            except Exception as e:
-                self.logger.error(f"Erro no tick: {e}", exc_info=True)
-                await asyncio.sleep(30)
+        try:
+            while self.running:
+                if self._shutdown and self._shutdown.is_set():
+                    self.running = False
+                    break
+                try:
+                    await self.scheduler.maybe_run(bot=self)
+                    await self._maybe_send_weekly_report()
+                    await self._tick()
+                except Exception as e:
+                    self.logger.error(f"Erro no tick: {e}", exc_info=True)
+                    await asyncio.sleep(30)
 
-            self.logger.info(f"💤 Aguardando {sleep_secs}s até próxima vela...")
-            await asyncio.sleep(sleep_secs)
+                append_metric(
+                    self.logger,
+                    {
+                        "event": "tick_cycle",
+                        "symbol": self.cfg.symbol,
+                        "timeframe": self.cfg.timeframe,
+                        "running": self.running,
+                    },
+                )
+
+                self.logger.info(f"💤 Aguardando {sleep_secs}s até próxima vela...")
+                if self._shutdown:
+                    try:
+                        await asyncio.wait_for(self._shutdown.wait(), timeout=sleep_secs)
+                        self.running = False
+                        break
+                    except asyncio.TimeoutError:
+                        pass
+                else:
+                    await asyncio.sleep(sleep_secs)
+        except asyncio.CancelledError:
+            self.running = False
+            raise
 
     # ── Tick ─────────────────────────────────────────────────
 
@@ -136,16 +163,18 @@ class TradingBot:
 
         # 5. Retorno acumulado vs B&H
         bal = await self.connector.get_balances()
-        usdt_free = bal.get("USDT", 0)
-        current_total = usdt_free + (self.position_size * price if self.in_position else 0)
+        quote_free = self._quote_free(bal)
+        current_total = quote_free + (self.position_size * price if self.in_position else 0)
         strategy_return_pct = (
             (current_total - self.cfg.paper_initial_balance)
             / self.cfg.paper_initial_balance * 100
         )
+        adx_s = f"{ind.adx:.1f}" if ind.adx is not None else "N/A"
+        vol_s = f"{ind.volume_ratio:.2f}" if ind.volume_ratio is not None else "N/A"
         self.logger.info(
             f"🧠 Regime: {ind.regime.value} | Confiança: {ind.confidence}/100 | "
-            f"ADX: {ind.adx:.1f if ind.adx else 'N/A'} | "
-            f"Vol: {ind.volume_ratio:.2f if ind.volume_ratio else 'N/A'}x | "
+            f"ADX: {adx_s} | "
+            f"Vol: {vol_s}x | "
             f"B&H: {ind.buy_and_hold_pct:+.1f}% | Bot: {strategy_return_pct:+.1f}%"
         )
 
@@ -173,15 +202,16 @@ class TradingBot:
     # ── Ordens ───────────────────────────────────────────────
 
     async def _execute_buy(self, price: float, confidence: int = 60):
-        bal  = await self.connector.get_balances()
-        usdt = bal.get("USDT", 0)
-        spend = self.sizer.usdt_amount(usdt, confidence)
+        bal = await self.connector.get_balances()
+        quote = self._quote_free(bal)
+        spend = self.sizer.usdt_amount(quote, confidence)
+        qc = self.cfg.quote_currency
 
         if spend < 10:
-            self.logger.warning(f"Ordem muito pequena ou saldo insuficiente (${spend:.2f}).")
+            self.logger.warning(f"Ordem muito pequena ou saldo insuficiente ({spend:.2f} {qc}).")
             return
 
-        self.logger.info(f"💡 {self.sizer.explain(confidence)} → ${spend:.2f} USDT")
+        self.logger.info(f"💡 {self.sizer.explain(confidence)} → {spend:.2f} {qc}")
 
         result = await self.reconnect.execute(
             self.connector.buy, spend, label="ordem de compra"
@@ -205,7 +235,7 @@ class TradingBot:
             f"🟢 COMPRA — {self.cfg.symbol}\n"
             f"   Preço:      ${price:,.2f}\n"
             f"   Qtd:        {result['amount']:.6f}\n"
-            f"   Valor:      ${result['cost']:.2f} USDT\n"
+            f"   Valor:      {result['cost']:.2f} {qc}\n"
             f"   Confiança:  {confidence}/100\n"
             f"   Stop trail: ${price*(1-self.cfg.stop_loss_pct/100):,.2f}\n"
             f"   Take profit:${price*(1+self.cfg.take_profit_pct/100):,.2f}"
@@ -234,13 +264,14 @@ class TradingBot:
         emoji      = "💰" if signal == Signal.TAKE_PROFIT else ("🔴" if pnl < 0 else "🟡")
         reason_str = f" ({reason})" if reason else ""
         peak_str   = f"\n   Pico atingido: ${self.trailing_stop.highest_price:,.2f}" if self.trailing_stop else ""
+        qc = self.cfg.quote_currency
 
         msg = (
             f"{emoji} VENDA{reason_str} [{signal.value}]\n"
             f"   Par:     {self.cfg.symbol}\n"
             f"   Entrada: ${self.buy_price:,.2f} | Saída: ${price:,.2f}\n"
-            f"   P&L:     {pnl:+.2f} USDT ({pnl_pct:+.2f}%){peak_str}\n"
-            f"   Win rate: {self._win_rate()}% | P&L total: {self.total_pnl:+.2f} USDT"
+            f"   P&L:     {pnl:+.2f} {qc} ({pnl_pct:+.2f}%){peak_str}\n"
+            f"   Win rate: {self._win_rate()}% | P&L total: {self.total_pnl:+.2f} {qc}"
         )
         self.logger.info(msg)
         await self.notifier.send(msg)
@@ -259,19 +290,36 @@ class TradingBot:
         if today.weekday() == 0 and today != self._last_report:
             self._last_report = today
             bal = await self.connector.get_balances()
-            total = bal.get("USDT", 0) + (self.position_size * (self.buy_price or 0))
-            ret   = ((total - self.cfg.paper_initial_balance) / self.cfg.paper_initial_balance) * 100
+            quote = self._quote_free(bal)
+            if self.in_position and self.position_size > 0:
+                mark = await self.connector.get_ticker_price()
+                if mark is None:
+                    mark = self.buy_price or 0
+                total = quote + self.position_size * mark
+            else:
+                total = quote
+            ret = ((total - self.cfg.paper_initial_balance) / self.cfg.paper_initial_balance) * 100
             report = await send_weekly_report(self.cfg, self.notifier, ret)
             self.logger.info(f"📋 Relatório semanal:\n{report}")
 
     # ── Utilitários ───────────────────────────────────────────
 
+    @staticmethod
+    def _quote_free(bal: dict) -> float:
+        if not bal:
+            return 0.0
+        q = bal.get("quote")
+        return float(q) if q is not None else 0.0
+
     def _log_indicators(self, price: float, ind):
+        rsi_s = f"{ind.rsi:.1f}" if ind.rsi is not None else "N/A"
+        maf_s = f"{ind.ma_fast:.2f}" if ind.ma_fast is not None else "N/A"
+        mas_s = f"{ind.ma_slow:.2f}" if ind.ma_slow is not None else "N/A"
         self.logger.info(
             f"📈 {self.cfg.symbol} ${price:,.2f} | "
-            f"RSI={ind.rsi:.1f if ind.rsi else 'N/A'} | "
-            f"MAf={ind.ma_fast:.2f if ind.ma_fast else 'N/A'} | "
-            f"MAs={ind.ma_slow:.2f if ind.ma_slow else 'N/A'} | "
+            f"RSI={rsi_s} | "
+            f"MAf={maf_s} | "
+            f"MAs={mas_s} | "
             f"Posição={'SIM' if self.in_position else 'NÃO'}"
         )
 
@@ -317,12 +365,13 @@ class TradingBot:
     async def shutdown(self):
         self.running = False
         bal = await self.connector.get_balances()
+        qc = self.cfg.quote_currency
         summary = (
             f"⏹  Bot encerrado\n"
             f"   Trades: {self.total_trades} | Win rate: {self._win_rate()}%\n"
-            f"   P&L total: {self.total_pnl:+.2f} USDT\n"
-            f"   P&L hoje:  {self.pnl_today:+.2f} USDT\n"
-            f"   Saldo USDT: {bal.get('USDT', 0):.2f}"
+            f"   P&L total: {self.total_pnl:+.2f} {qc}\n"
+            f"   P&L hoje:  {self.pnl_today:+.2f} {qc}\n"
+            f"   Saldo {qc}: {self._quote_free(bal):.2f}"
         )
         self.logger.info(summary)
         await self.notifier.send(summary)

@@ -83,7 +83,7 @@ def generate_weekly_report(cfg, strategy_return_pct: float = 0.0) -> str:
         f"📋 RELATÓRIO SEMANAL — {now.strftime('%d/%m/%Y')}",
         f"Par: {cfg.symbol} | {cfg.timeframe}",
         "─" * 35,
-        f"{emoji_pnl} P&L semana:   {'+'if total_pnl>=0 else ''}{total_pnl:.2f} USDT",
+        f"{emoji_pnl} P&L semana:   {'+'if total_pnl>=0 else ''}{total_pnl:.2f} {cfg.quote_currency}",
         f"🎯 Win rate:    {win_rate:.1f}% ({len(wins)}/{len(sells)} trades)",
         f"📊 Total trades: {len(week_trades)} ({len(buys)} compras, {len(sells)} vendas)",
         f"💼 Retorno acum: {'+'if strategy_return_pct>=0 else ''}{strategy_return_pct:.2f}%",

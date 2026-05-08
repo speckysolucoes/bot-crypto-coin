@@ -45,7 +45,7 @@ class PositionSizer:
 
     def usdt_amount(self, balance: float, confidence: int) -> float:
         """
-        Retorna o valor em USDT a investir.
+        Valor na moeda cota do par (ex.: USDT em BTC/USDT, EUR em BTC/EUR).
         """
         pct = self.size_pct(confidence)
         return round(balance * (pct / 100), 2)

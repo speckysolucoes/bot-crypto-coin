@@ -20,6 +20,8 @@
     background-image:linear-gradient(rgba(0,229,160,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(0,229,160,0.03) 1px,transparent 1px);
     background-size:40px 40px;pointer-events:none;z-index:0;}
   .wrap{position:relative;z-index:1;max-width:1200px;margin:0 auto;padding:2rem 1.5rem;}
+  .dash-docs{font-size:12px;color:var(--text2);font-family:var(--mono);line-height:1.65;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;margin-bottom:1rem;}
+  .dash-docs code{color:var(--green);font-size:11px;}
 
   header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:2rem;flex-wrap:wrap;gap:1rem;}
   .logo{display:flex;align-items:center;gap:12px;}
@@ -121,6 +123,16 @@
 </head>
 <body>
 <div class="wrap">
+
+  <aside class="dash-docs" aria-label="Arquivos de entrada">
+    <strong style="color:var(--text)">Dados esperados</strong> (painel estático — sem backend): arraste também os arquivos da pasta <code>logs/</code> na zona abaixo.<br>
+    • <code>logs/bot.log</code> — saída do processo bot &nbsp;
+    • <code>logs/trades.jsonl</code> — uma linha JSON por trade (<code>_save_trade</code>)<br>
+    • <code>logs/backtest_result.json</code> — resultado de <code>python backtest.py</code> &nbsp;
+    • <code>logs/autotune_history.jsonl</code> — linhas JSON do auto-tuner<br>
+    Opcional ao vivo: defina <code>BOT_METRICS_JSON=true</code> para registrar ciclos em <code>logs/bot_metrics.jsonl</code>;
+    segundo log estruturado: <code>BOT_JSON_LOG_FILE=logs/bot_events.jsonl</code> no <code>.env</code>.
+  </aside>
 
   <header>
     <div class="logo">

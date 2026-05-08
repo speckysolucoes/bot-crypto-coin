@@ -25,8 +25,10 @@ class ExchangeConnector:
 
     async def connect(self):
         if self.cfg.paper_trading:
+            qc = self.cfg.quote_currency
             self.logger.info(
-                f"📄 Paper trading ativo — saldo inicial: ${self.cfg.paper_initial_balance:,.2f} USDT"
+                f"📄 Paper trading ativo — saldo inicial: "
+                f"{self.cfg.paper_initial_balance:,.2f} {qc}"
             )
             return
 
@@ -110,23 +112,29 @@ class ExchangeConnector:
 
     # ── Ordens ───────────────────────────────────────────────
 
-    async def buy(self, usdt_amount: float) -> Optional[dict]:
+    async def buy(self, quote_amount: float) -> Optional[dict]:
+        """Gasta até `quote_amount` na moeda cota do par (ex.: USDT em BTC/USDT)."""
         price = await self.get_ticker_price()
         if price is None:
             return None
 
         if self.cfg.paper_trading:
-            return self._paper_buy(usdt_amount, price)
+            return self._paper_buy(quote_amount, price)
 
         try:
             qty = self.exchange.amount_to_precision(
-                self.cfg.symbol, usdt_amount / price
+                self.cfg.symbol, quote_amount / price
             )
             order = await self.exchange.create_market_buy_order(
                 self.cfg.symbol, float(qty)
             )
             self.logger.info(f"✅ Ordem de compra executada: {order}")
-            return {"price": price, "amount": float(qty), "cost": usdt_amount, "order_id": order["id"]}
+            return {
+                "price": price,
+                "amount": float(qty),
+                "cost": quote_amount,
+                "order_id": order["id"],
+            }
         except Exception as e:
             self.logger.error(f"Erro ao executar compra: {e}")
             return None
@@ -153,19 +161,24 @@ class ExchangeConnector:
     # ── Saldo ─────────────────────────────────────────────────
 
     async def get_balances(self) -> dict:
+        """Retorna sempre `quote`, `base` e códigos — independente da moeda cota."""
+        qc = self.cfg.quote_currency
+        bc = self.cfg.base_currency
         if self.cfg.paper_trading:
             return {
-                "USDT": self._paper_balance,
-                "asset": self._paper_asset,
+                "quote": self._paper_balance,
+                "base": self._paper_asset,
+                "quote_ccy": qc,
+                "base_ccy": bc,
                 "buy_price": self._paper_buy_price,
             }
         try:
             bal = await self.exchange.fetch_balance()
-            quote = self.cfg.symbol.split("/")[1]
-            base = self.cfg.symbol.split("/")[0]
             return {
-                "USDT": float(bal.get(quote, {}).get("free", 0)),
-                "asset": float(bal.get(base, {}).get("free", 0)),
+                "quote": float(bal.get(qc, {}).get("free", 0)),
+                "base": float(bal.get(bc, {}).get("free", 0)),
+                "quote_ccy": qc,
+                "base_ccy": bc,
                 "buy_price": None,
             }
         except Exception as e:
@@ -174,15 +187,15 @@ class ExchangeConnector:
 
     # ── Paper trading interno ─────────────────────────────────
 
-    def _paper_buy(self, usdt_amount: float, price: float) -> dict:
-        usdt_amount = min(usdt_amount, self._paper_balance)
-        fee = usdt_amount * 0.001  # 0.1% taxa
-        net = usdt_amount - fee
+    def _paper_buy(self, quote_amount: float, price: float) -> dict:
+        quote_amount = min(quote_amount, self._paper_balance)
+        fee = quote_amount * 0.001  # 0.1% taxa
+        net = quote_amount - fee
         qty = net / price
-        self._paper_balance -= usdt_amount
+        self._paper_balance -= quote_amount
         self._paper_asset += qty
         self._paper_buy_price = price
-        return {"price": price, "amount": qty, "cost": usdt_amount, "fee": fee}
+        return {"price": price, "amount": qty, "cost": quote_amount, "fee": fee}
 
     def _paper_sell(self, asset_amount: float, price: float) -> dict:
         gross = asset_amount * price

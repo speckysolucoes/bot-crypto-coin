@@ -15,8 +15,12 @@ import pandas as pd
 import numpy as np
 
 from src.config import load_config
-from src.indicators import compute_indicators
-from src.strategy import Signal, get_signal
+from src.simulation import (
+    PaperState,
+    DEFAULT_INITIAL_BALANCE,
+    paper_finalize_open_position,
+    paper_process_candle,
+)
 
 
 async def fetch_history(symbol: str, timeframe: str, days: int, exchange_id: str = "binance") -> pd.DataFrame:
@@ -43,51 +47,27 @@ async def fetch_history(symbol: str, timeframe: str, days: int, exchange_id: str
 
 
 def run_backtest(df: pd.DataFrame, cfg) -> dict:
-    balance = 10_000.0
-    asset = 0.0
-    buy_price = 0.0
-    in_position = False
+    state = PaperState(balance=DEFAULT_INITIAL_BALANCE)
     trades = []
 
     for i in range(len(df)):
         window = df.iloc[: i + 1]
-        ind = compute_indicators(window, cfg)
-        if ind is None:
-            continue
+        bar_t = window.index[-1]
+        state, chunk = paper_process_candle(
+            window,
+            cfg,
+            state,
+            initial_balance=DEFAULT_INITIAL_BALANCE,
+            bar_time=bar_t,
+            min_buy_balance=0.0,
+        )
+        for rec in chunk:
+            trades.append(rec)
 
-        signal = get_signal(ind, in_position, buy_price if in_position else None, cfg)
-
-        if signal == Signal.BUY and not in_position:
-            spend = balance * (cfg.trade_size_pct / 100)
-            qty = (spend * 0.999) / ind.close  # 0.1% taxa
-            balance -= spend
-            asset = qty
-            buy_price = ind.close
-            in_position = True
-            trades.append({"side": "BUY", "price": ind.close, "time": window.index[-1]})
-
-        elif signal in (Signal.SELL, Signal.STOP_LOSS, Signal.TAKE_PROFIT) and in_position:
-            gross = asset * ind.close
-            net = gross * 0.999
-            pnl = net - (asset * buy_price)
-            balance += net
-            trades.append({
-                "side": signal.value,
-                "price": ind.close,
-                "time": window.index[-1],
-                "pnl": pnl,
-                "pnl_pct": ((ind.close - buy_price) / buy_price) * 100,
-            })
-            asset = 0.0
-            in_position = False
-
-    # Se encerrou com posição aberta, fecha no último preço
-    if in_position and asset > 0:
-        last_price = float(df["close"].iloc[-1])
-        net = asset * last_price * 0.999
-        pnl = net - (asset * buy_price)
-        balance += net
-        trades.append({"side": "SELL (fechamento)", "price": last_price, "pnl": pnl})
+    last_price = float(df["close"].iloc[-1])
+    state, final_chunk = paper_finalize_open_position(state, last_price)
+    trades.extend(final_chunk)
+    balance = state.balance
 
     sells = [t for t in trades if "pnl" in t]
     wins = [t for t in sells if t["pnl"] > 0]
@@ -95,9 +75,11 @@ def run_backtest(df: pd.DataFrame, cfg) -> dict:
     final_balance = balance
 
     return {
-        "initial_balance": 10_000.0,
+        "initial_balance": DEFAULT_INITIAL_BALANCE,
         "final_balance": round(final_balance, 2),
-        "total_return_pct": round(((final_balance - 10_000) / 10_000) * 100, 2),
+        "total_return_pct": round(
+            ((final_balance - DEFAULT_INITIAL_BALANCE) / DEFAULT_INITIAL_BALANCE) * 100, 2
+        ),
         "total_pnl": round(total_pnl, 2),
         "total_trades": len(sells),
         "winning_trades": len(wins),
@@ -105,6 +87,7 @@ def run_backtest(df: pd.DataFrame, cfg) -> dict:
         "avg_pnl_pct": round(np.mean([t["pnl_pct"] for t in sells if "pnl_pct" in t]), 2) if sells else 0,
         "trades": trades[-20:],  # últimos 20
     }
+
 
 
 async def main():
@@ -153,5 +136,10 @@ async def main():
     print("\n💾 Resultado salvo em logs/backtest_result.json")
 
 
-if __name__ == "__main__":
+def main_entry():
+    """Entrada setuptools: cryptobot-backtest."""
     asyncio.run(main())
+
+
+if __name__ == "__main__":
+    main_entry()

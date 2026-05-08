@@ -28,8 +28,12 @@ from typing import List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from src.indicators import compute_indicators
-from src.strategy import Signal, get_signal
+from src.simulation import (
+    DEFAULT_INITIAL_BALANCE,
+    PaperState,
+    paper_finalize_open_position,
+    paper_process_candle,
+)
 
 
 # ── Espaço de busca dos parâmetros ───────────────────────────────────────────
@@ -106,47 +110,33 @@ def random_individual() -> Individual:
 
 def evaluate(ind: Individual, df: pd.DataFrame) -> Individual:
     """
-    Roda backtest rápido com os parâmetros do indivíduo.
+    Roda backtest rápido com os parâmetros do indivíduo (mesmo núcleo que `run_backtest`).
     O fitness combina retorno, win rate e penaliza poucos trades.
     """
-    balance = 10_000.0
-    asset = 0.0
-    buy_price = 0.0
-    in_position = False
-    pnl_series = []
+    state = PaperState(balance=DEFAULT_INITIAL_BALANCE)
+    pnl_series: List[float] = []
 
     for i in range(len(df)):
         window = df.iloc[: i + 1]
-        indicators = compute_indicators(window, ind)
-        if indicators is None:
-            continue
+        state, chunk = paper_process_candle(
+            window,
+            ind,
+            state,
+            initial_balance=DEFAULT_INITIAL_BALANCE,
+            bar_time=None,
+            min_buy_balance=10.0,
+        )
+        for t in chunk:
+            if "pnl" in t:
+                pnl_series.append(t["pnl"])
 
-        signal = get_signal(indicators, in_position, buy_price if in_position else None, ind)
+    last = float(df["close"].iloc[-1])
+    state, fins = paper_finalize_open_position(state, last)
+    for t in fins:
+        if "pnl" in t:
+            pnl_series.append(t["pnl"])
 
-        if signal == Signal.BUY and not in_position and balance > 10:
-            spend = balance * (ind.trade_size_pct / 100)
-            qty = (spend * 0.999) / indicators.close
-            balance -= spend
-            asset = qty
-            buy_price = indicators.close
-            in_position = True
-
-        elif signal in (Signal.SELL, Signal.STOP_LOSS, Signal.TAKE_PROFIT) and in_position:
-            gross = asset * indicators.close
-            net = gross * 0.999
-            pnl = net - (asset * buy_price)
-            pnl_series.append(pnl)
-            balance += net
-            asset = 0.0
-            in_position = False
-
-    # Fecha posição aberta no último preço
-    if in_position and asset > 0:
-        last = float(df["close"].iloc[-1])
-        net = asset * last * 0.999
-        pnl = net - (asset * buy_price)
-        pnl_series.append(pnl)
-        balance += net
+    balance = state.balance
 
     total_trades = len(pnl_series)
     ind.total_trades = total_trades
@@ -158,7 +148,7 @@ def evaluate(ind: Individual, df: pd.DataFrame) -> Individual:
     wins = sum(1 for p in pnl_series if p > 0)
     total_pnl = sum(pnl_series)
     final_balance = balance
-    total_return = ((final_balance - 10_000) / 10_000) * 100
+    total_return = ((final_balance - DEFAULT_INITIAL_BALANCE) / DEFAULT_INITIAL_BALANCE) * 100
 
     ind.total_return_pct = round(total_return, 2)
     ind.win_rate = round((wins / total_trades) * 100, 1)

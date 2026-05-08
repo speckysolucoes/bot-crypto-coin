@@ -74,45 +74,45 @@ class MultiTimeframeAnalyzer:
         if now - last < cache_ttl and higher_tf in self._cache:
             return self._cache[higher_tf]
 
+        original_tf = self.cfg.timeframe
         try:
-            # Busca candles do timeframe superior
-            original_tf = self.cfg.timeframe
             self.cfg.timeframe = higher_tf
             df = await self.connector.fetch_ohlcv(limit=60)
-            self.cfg.timeframe = original_tf
-
-            if df is None or len(df) < 30:
-                return MTFBias.UNKNOWN
-
-            ind = compute_indicators(df, self.cfg)
-            if ind is None:
-                return MTFBias.UNKNOWN
-
-            # Determina viés pelo regime e direção das médias
-            if ind.regime == MarketRegime.TRENDING_UP:
-                bias = MTFBias.BULLISH
-            elif ind.regime == MarketRegime.TRENDING_DOWN:
-                bias = MTFBias.BEARISH
-            elif ind.ma_fast and ind.ma_slow:
-                bias = MTFBias.BULLISH if ind.ma_fast > ind.ma_slow else MTFBias.BEARISH
-            else:
-                bias = MTFBias.NEUTRAL
-
-            self._cache[higher_tf] = bias
-            self._cache_time[higher_tf] = now
-
-            self.logger.info(
-                f"🔭 MTF [{higher_tf}]: viés={bias.value} | "
-                f"RSI={ind.rsi:.1f if ind.rsi else '?'} | "
-                f"ADX={ind.adx:.1f if ind.adx else '?'} | "
-                f"Regime={ind.regime.value}"
-            )
-            return bias
-
         except Exception as e:
             self.logger.warning(f"MTF: erro ao buscar {higher_tf}: {e}")
-            self.cfg.timeframe = self.cfg.timeframe  # garante reset
             return MTFBias.UNKNOWN
+        finally:
+            self.cfg.timeframe = original_tf
+
+        if df is None or len(df) < 30:
+            return MTFBias.UNKNOWN
+
+        ind = compute_indicators(df, self.cfg)
+        if ind is None:
+            return MTFBias.UNKNOWN
+
+        # Determina viés pelo regime e direção das médias
+        if ind.regime == MarketRegime.TRENDING_UP:
+            bias = MTFBias.BULLISH
+        elif ind.regime == MarketRegime.TRENDING_DOWN:
+            bias = MTFBias.BEARISH
+        elif ind.ma_fast and ind.ma_slow:
+            bias = MTFBias.BULLISH if ind.ma_fast > ind.ma_slow else MTFBias.BEARISH
+        else:
+            bias = MTFBias.NEUTRAL
+
+        self._cache[higher_tf] = bias
+        self._cache_time[higher_tf] = now
+
+        rsi_s = f"{ind.rsi:.1f}" if ind.rsi is not None else "?"
+        adx_s = f"{ind.adx:.1f}" if ind.adx is not None else "?"
+        self.logger.info(
+            f"🔭 MTF [{higher_tf}]: viés={bias.value} | "
+            f"RSI={rsi_s} | "
+            f"ADX={adx_s} | "
+            f"Regime={ind.regime.value}"
+        )
+        return bias
 
     def allows_buy(self, bias: MTFBias) -> bool:
         """Retorna True se o viés do TF superior permite compra."""

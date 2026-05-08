@@ -92,8 +92,8 @@ def main():
 
     # Lista de arquivos/pastas a enviar
     to_send = [
-        "bot.py", "backtest.py", "autotune.py", "scheduler.py",
-        "requirements.txt", "dashboard.html", "AUTOTUNE.md", "README.md",
+        "bot.py", "backtest.py", "autotune.py",
+        "requirements.txt", "pyproject.toml", "dashboard.html", "AUTOTUNE.md", "README.md",
         "src/", "install.sh",
     ]
 

@@ -68,7 +68,9 @@ python autotune.py --min-val 2.0
 |---|---|
 | `logs/autotune_history.jsonl` | Histórico de todas as otimizações |
 | `logs/optimization_history.json` | Evolução do fitness por geração |
-| `logs/schedule_state.json` | Quando foi a última otimização |
+| `logs/schedule_state.json` | Última otimização **e** primeira subida (`first_seen`) persistidos |
+
+Na primeira vida após upgrade, o auto-tuner **não roda assim que o bot sobe**: aguarda `interval_days` e a janela `run_hour`. Scheduler standalone: `python -m src.scheduler`.
 
 ---
 

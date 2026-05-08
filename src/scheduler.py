@@ -5,11 +5,13 @@ Integra o AutoTuner ao loop do bot, re-otimizando automaticamente
 em intervalos configuráveis sem interromper o trading.
 
 Uso standalone (sem o bot principal):
-    python scheduler.py
+    python -m src.scheduler
 
 Integrado ao bot:
-    O bot.py chama WeeklyScheduler.maybe_run() a cada tick.
+    O bot chama WeeklyScheduler.maybe_run() a cada tick.
 """
+
+from __future__ import annotations
 
 import asyncio
 import json
@@ -18,8 +20,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from src.config import Config
 from autotune import AutoTuner
+from src.config import Config
 
 
 SCHEDULE_FILE = "logs/schedule_state.json"
@@ -29,6 +31,8 @@ class WeeklyScheduler:
     """
     Controla quando rodar o auto-tuner.
     Persiste o estado em disco para sobreviver a reinicializações.
+    Na primeira subida não roda tuner imediatamente: aguarda `interval_days`
+    até a `run_hour` configurada (evita spike CPU/API ao iniciar).
     """
 
     def __init__(
@@ -36,7 +40,7 @@ class WeeklyScheduler:
         cfg: Config,
         logger: logging.Logger,
         interval_days: int = 7,
-        run_hour: int = 3,          # Hora do dia para rodar (3h da manhã)
+        run_hour: int = 3,
         train_days: int = 60,
         val_days: int = 14,
         population: int = 40,
@@ -56,35 +60,36 @@ class WeeklyScheduler:
         self.restart_bot_after = restart_bot_after
 
         self._last_run: Optional[datetime] = None
+        self._first_seen: Optional[datetime] = None
         self._running_now: bool = False
         self._load_state()
-
-    # ── Estado persistido ─────────────────────────────────────────────────────
 
     def _load_state(self):
         if Path(SCHEDULE_FILE).exists():
             try:
-                with open(SCHEDULE_FILE) as f:
+                with open(SCHEDULE_FILE, encoding="utf-8") as f:
                     state = json.load(f)
                 ts = state.get("last_run")
                 if ts:
                     self._last_run = datetime.fromisoformat(ts)
                     self.logger.info(
-                        f"⏰ Scheduler: última otimização em {self._last_run.strftime('%d/%m/%Y %H:%M')}"
+                        "⏰ Scheduler: última otimização em "
+                        + self._last_run.strftime("%d/%m/%Y %H:%M")
                     )
+                fs = state.get("first_seen")
+                if fs:
+                    self._first_seen = datetime.fromisoformat(fs)
             except Exception:
                 pass
 
     def _save_state(self):
         Path(SCHEDULE_FILE).parent.mkdir(exist_ok=True)
-        with open(SCHEDULE_FILE, "w") as f:
-            json.dump(
-                {"last_run": self._last_run.isoformat() if self._last_run else None},
-                f,
-                indent=2,
-            )
-
-    # ── Verificação de agendamento ────────────────────────────────────────────
+        payload = {
+            "last_run": self._last_run.isoformat() if self._last_run else None,
+            "first_seen": self._first_seen.isoformat() if self._first_seen else None,
+        }
+        with open(SCHEDULE_FILE, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
 
     def _should_run(self) -> bool:
         if self._running_now:
@@ -92,32 +97,34 @@ class WeeklyScheduler:
 
         now = datetime.now()
 
-        # Ainda não rodou nunca → roda agora
         if self._last_run is None:
+            if self._first_seen is None:
+                self._first_seen = now
+                self._save_state()
+                self.logger.info(
+                    "⏰ Scheduler: primeira subida — auto-tuner não roda ao iniciar; "
+                    f"primeira janela após {self.interval_days}d na hora {self.run_hour:02d}h."
+                )
+                return False
+            earliest = self._first_seen + timedelta(days=self.interval_days)
+            if now < earliest or now.hour != self.run_hour:
+                return False
             return True
 
         next_run = self._last_run + timedelta(days=self.interval_days)
-
-        # Chegou a hora E estamos na janela da hora configurada
-        if now >= next_run and now.hour == self.run_hour:
-            return True
-
-        # Passou da data mas fora da janela → aguarda
-        return False
+        return bool(now >= next_run and now.hour == self.run_hour)
 
     def next_run_str(self) -> str:
+        if self._last_run is None and self._first_seen:
+            tgt = self._first_seen + timedelta(days=self.interval_days)
+            return f"{tgt.strftime('%d/%m/%Y')} (janela {self.run_hour:02d}h)"
         if self._last_run is None:
-            return "assim que possível"
+            return "(aguardando primeira janela após período inicial)"
         next_run = self._last_run + timedelta(days=self.interval_days)
         return next_run.strftime("%d/%m/%Y às %H:%M")
 
-    # ── Execução ──────────────────────────────────────────────────────────────
-
     async def maybe_run(self, bot=None) -> bool:
-        """
-        Chamado a cada tick do bot.
-        Retorna True se rodou a otimização.
-        """
+        """Chamado a cada tick do bot."""
         if not self._should_run():
             return False
 
@@ -143,26 +150,23 @@ class WeeklyScheduler:
                 self.logger.info(
                     "🔄 Parâmetros atualizados — recarregando configurações do bot..."
                 )
-                # Recarrega o config sem parar o bot
                 from src.config import load_config
-                new_cfg = load_config()
-                bot.cfg = new_cfg
+
+                bot.cfg = load_config()
                 self.logger.info("✅ Configurações recarregadas. Bot continua operando.")
 
             return True
 
         except Exception as e:
-            self.logger.error(f"Erro no auto-tuner: {e}", exc_info=True)
+            self.logger.error("Erro no auto-tuner: %s", e, exc_info=True)
             return False
         finally:
             self._running_now = False
 
 
-# ── Modo standalone ───────────────────────────────────────────────────────────
-
 async def run_standalone():
-    """Roda o scheduler em loop standalone, sem o bot principal."""
     import os
+
     from src.config import load_config
     from src.logger import setup_logger
 
@@ -174,18 +178,22 @@ async def run_standalone():
         cfg=cfg,
         logger=logger,
         interval_days=7,
-        run_hour=datetime.now().hour,  # Roda na hora atual para teste
+        run_hour=datetime.now().hour,
     )
 
-    logger.info(f"🕐 Scheduler iniciado — próxima otimização: {scheduler.next_run_str()}")
+    logger.info(
+        "🕐 Scheduler iniciado — próxima otimização: %s", scheduler.next_run_str()
+    )
     logger.info("   (Ctrl+C para parar)")
 
-    CHECK_INTERVAL = 3600  # Verifica a cada hora
+    CHECK_INTERVAL = 3600
 
     while True:
         ran = await scheduler.maybe_run()
         if ran:
-            logger.info(f"✅ Otimização concluída. Próxima: {scheduler.next_run_str()}")
+            logger.info(
+                "✅ Otimização concluída. Próxima: %s", scheduler.next_run_str()
+            )
         await asyncio.sleep(CHECK_INTERVAL)
 
 

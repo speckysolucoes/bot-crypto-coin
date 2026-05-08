@@ -49,6 +49,16 @@ class Config:
     log_level: str = "INFO"
     log_file: str = "logs/bot.log"
 
+    @property
+    def quote_currency(self) -> str:
+        parts = self.symbol.split("/", 1)
+        return parts[1].strip() if len(parts) == 2 else "USDT"
+
+    @property
+    def base_currency(self) -> str:
+        parts = self.symbol.split("/", 1)
+        return parts[0].strip() if len(parts) == 2 else "BTC"
+
 
 def _bool(val: str) -> bool:
     return val.strip().lower() in ("true", "1", "yes", "sim")

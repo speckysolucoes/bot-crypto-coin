@@ -1,0 +1,3 @@
+[console_scripts]
+cryptobot = bot:main_entry
+cryptobot-backtest = backtest:main_entry
